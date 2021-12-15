@@ -14,8 +14,6 @@
 
 module Test.Hspec.Core.Runner.Eval (
   EvalConfig(..)
-, NonEmpty(..)
-, nonEmpty
 , EvalTree
 , Tree(..)
 , EvalItem(..)
@@ -49,14 +47,8 @@ import           Test.Hspec.Core.Clock
 import           Test.Hspec.Core.Example.Location
 import           Test.Hspec.Core.Example (safeEvaluate)
 
-data NonEmpty a = a :| [a]
-  deriving (Eq, Show, Functor, Foldable, Traversable)
-
-infixr 5 :|
-
-nonEmpty :: [a] -> Maybe (NonEmpty a)
-nonEmpty []     = Nothing
-nonEmpty (a:as) = Just (a :| as)
+import qualified NonEmpty
+import           NonEmpty (NonEmpty(..))
 
 data Tree c a =
     Node String (NonEmpty (Tree c a))
@@ -144,7 +136,7 @@ runFormatter config specs = do
     withTimer 0.05 $ \ timer -> do
 
       format Format.Started
-      runReaderT (run $ map (fmap (fmap (. reportProgress timer) . snd)) runningSpecs) (Env config ref) `E.finally` do
+      runReaderT (run . applyCleanup $ map (fmap (fmap (. reportProgress timer) . snd)) runningSpecs) (Env config ref) `E.finally` do
         results <- reverse <$> readIORef ref
         format (Format.Done results)
 
@@ -166,13 +158,48 @@ cancelMany asyncs = do
 data Item a = Item {
   _itemDescription :: String
 , _itemLocation :: Maybe Location
-, _itemAction :: a
+, itemAction :: a
 } deriving Functor
 
 type Job m p a = (p -> m ()) -> m a
 
-type RunningItem m = Item (Path -> m (Seconds, Result))
-type RunningTree m = Tree (IO ()) (RunningItem m)
+type RunningItem = Item (Path -> IO (Seconds, Result))
+type RunningTree c = Tree c RunningItem
+
+applyCleanup :: [RunningTree (IO ())] -> [RunningTree ()]
+applyCleanup = map go
+  where
+    go t = case t of
+      Leaf a -> Leaf a
+      Node label xs -> Node label (go <$> xs)
+      NodeWithCleanup loc cleanup xs -> NodeWithCleanup loc () (addCleanup cleanup $ go <$> xs)
+
+addCleanup :: IO () -> NonEmpty (RunningTree ()) -> NonEmpty (RunningTree ())
+addCleanup cleanup = go
+  where
+    go = NonEmpty.reverse . mapHead goNode . NonEmpty.reverse
+
+    goNode node = case node of
+      Leaf item -> Leaf (addCleanupToItem cleanup item)
+      NodeWithCleanup loc () zs -> NodeWithCleanup loc () (go zs)
+      Node description zs -> Node description (go zs)
+
+mapHead :: (a -> a) -> NonEmpty a -> NonEmpty a
+mapHead f xs = case xs of
+  y :| ys -> f y :| ys
+
+addCleanupToItem :: IO () -> RunningItem -> RunningItem
+addCleanupToItem cleanup item = item {
+  itemAction = \ path -> do
+    (t1, r1) <- itemAction item path
+    (t2, r2) <- liftIO $ measure $ safeEvaluate (cleanup >> return (Result "" Success))
+    let t = t1 + t2
+    return . (,) t $ case (r1, r2) of
+      (_, Result "" Success) -> r1
+      (Result _ Success, Result _ Pending{}) -> r2
+      (Result _ Success, _) -> r2
+      (_, _) -> r1
+}
 
 type RunningItem_ m = (Async (), Item (Job m Progress (Seconds, Result)))
 type RunningTree_ m = Tree (IO ()) (RunningItem_ m)
@@ -228,12 +255,12 @@ runParallel Semaphore{..} action = do
 replaceMVar :: MVar a -> a -> IO ()
 replaceMVar mvar p = tryTakeMVar mvar >> putMVar mvar p
 
-run :: [RunningTree IO] -> EvalM ()
+run :: [RunningTree ()] -> EvalM ()
 run specs = do
   fastFail <- asks (evalConfigFailFast . envConfig)
   sequenceActions fastFail (concatMap foldSpec specs)
   where
-    foldSpec :: RunningTree IO -> [EvalM ()]
+    foldSpec :: RunningTree () -> [EvalM ()]
     foldSpec = foldTree FoldTree {
       onGroupStarted = groupStarted
     , onGroupDone = groupDone
@@ -241,16 +268,10 @@ run specs = do
     , onLeafe = evalItem
     }
 
-    runCleanup :: Maybe Location -> [String] -> IO () -> EvalM ()
-    runCleanup loc groups action = do
-      r <- liftIO $ measure $ safeEvaluate (action >> return (Result "" Success))
-      case r of
-        (_, Result "" Success) -> return ()
-        _ -> reportItem path loc (return r)
-      where
-        path = (groups, "afterAll-hook")
+    runCleanup :: Maybe Location -> [String] -> () -> EvalM ()
+    runCleanup _loc _groups = return
 
-    evalItem :: [String] -> RunningItem IO -> EvalM ()
+    evalItem :: [String] -> RunningItem -> EvalM ()
     evalItem groups (Item requirement loc action) = do
       reportItem path loc $ lift (action path)
       where

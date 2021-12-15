@@ -1,3 +1,7 @@
+## Changes in next (2.10.0)
+  - Do not treat afterAll as a another spec item (fixes #414, #364, #363)
+  - Allow to transform the `Config` in `SpecM`
+
 ## Changes in 2.9.4
   - Compatibility with GHCJS (see #599)
 

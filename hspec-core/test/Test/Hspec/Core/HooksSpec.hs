@@ -322,7 +322,6 @@ spec = do
         , "foo"
         , "before"
         , "bar"
-        , "before"
         , "from before"
         ]
 
@@ -337,8 +336,7 @@ spec = do
         evalSpec $ H.before (return "from before") $ H.afterAll (\_ -> throwException) $ do
           H.it "foo" $ \a -> a `shouldBe` "from before"
         `shouldReturn` [
-          item ["foo"] Success
-        , item ["afterAll-hook"] divideByZero
+          item ["foo"] divideByZero
         ]
 
   describe "afterAll_" $ do
@@ -354,7 +352,6 @@ spec = do
         , "foo"
         , "before"
         , "bar"
-        , "before"
         , "afterAll_"
         ]
 
@@ -383,8 +380,7 @@ spec = do
           H.afterAll_ H.pending $ do
             H.it "foo" True
         `shouldReturn` [
-          item ["foo"] Success
-        , item ["afterAll-hook"] (Pending Nothing Nothing)
+          item ["foo"] (Pending Nothing Nothing)
         ]
 
     context "when action throws an exception" $ do
@@ -393,8 +389,7 @@ spec = do
           H.afterAll_ throwException $ do
             H.it "foo" True
         `shouldReturn` [
-          item ["foo"] Success
-        , item ["afterAll-hook"] divideByZero
+          item ["foo"] divideByZero
         ]
 
     context "when action is successful" $ do
@@ -517,7 +512,7 @@ spec = do
         , "2"
         , "3"
         ]
-      mockCounter mock `shouldReturn` 4
+      mockCounter mock `shouldReturn` 3
 
     it "reports exceptions on acquire" $ do
       evalSpec $ do
@@ -525,7 +520,6 @@ spec = do
           H.it "foo" True
       `shouldReturn` [
         item ["foo"] divideByZero
-      , item ["afterAll-hook"] (Pending Nothing (Just "exception in beforeAll-hook (see previous failure)"))
       ]
 
     it "reports exceptions on release" $ do
@@ -533,8 +527,7 @@ spec = do
         H.aroundAll_ (<* throwException) $ do
           H.it "foo" True
       `shouldReturn` [
-        item ["foo"] Success
-      , item ["afterAll-hook"] divideByZero
+        item ["foo"] divideByZero
       ]
 
   describe "aroundAllWith" $ do
@@ -551,7 +544,7 @@ spec = do
         , "1"
         , "1"
         ]
-      mockCounter mock `shouldReturn` 4
+      mockCounter mock `shouldReturn` 3
 
     it "reports exceptions on acquire" $ do
       evalSpec $ do
@@ -559,7 +552,6 @@ spec = do
           H.it "foo" H.pending
       `shouldReturn` [
         item ["foo"] divideByZero
-      , item ["afterAll-hook"] (Pending Nothing (Just "exception in beforeAll-hook (see previous failure)"))
       ]
 
     it "reports exceptions on release" $ do
@@ -567,8 +559,7 @@ spec = do
         H.aroundAllWith (\ action () -> action () <* throwException) $ do
           H.it "foo" True
       `shouldReturn` [
-        item ["foo"] Success
-      , item ["afterAll-hook"] divideByZero
+        item ["foo"] divideByZero
       ]
 
   where
